@@ -7,8 +7,8 @@ CLIENT_TPL_FILE=client.conf.tpl
 SERVER_TPL_FILE=server.conf.tpl
 SAVED_FILE=.saved
 AVAILABLE_IP_FILE=.available_ip
-WG_TMP_CONF_FILE=.$_INTERFACE.conf
-WG_CONF_FILE="/etc/wireguard/$_INTERFACE.conf"
+WG_TMP_CONF_FILE=.$_CONFIG_NAME.conf
+WG_CONF_FILE="/usr/local/etc/wireguard/$_CONFIG_NAME.conf"
 
 dec2ip() {
     local delim=''
@@ -50,15 +50,21 @@ get_vpn_ip() {
     local ip=$(head -1 $AVAILABLE_IP_FILE)
     if [[ $ip ]]; then
     local mat="${ip/\//\\\/}"
-        sed -i "/^$mat$/d" $AVAILABLE_IP_FILE
+        sed -itmp "/^$mat$/d" $AVAILABLE_IP_FILE
     fi
     echo "$ip"
+}
+
+get_interface() {
+  local interface=`cat /var/run/wireguard/${_CONFIG_NAME}.name`
+  echo "$interface"
 }
 
 add_user() {
     local user=$1
     local template_file=${CLIENT_TPL_FILE}
-    local interface=${_INTERFACE}
+    local interface=$(get_interface)
+    local allowedIps=${_ALLOWED_IPS}
     local userdir="users/$user"
 
     mkdir -p "$userdir"
@@ -76,10 +82,18 @@ add_user() {
 
     # change wg config
     local ip=${_VPN_IP%/*}/32
+
+    if [[ ! -z "$allowedIps" ]]; then
+        ip="$allowedIps"
+    fi
+
     if [[ ! -z "$route" ]]; then
         ip="0.0.0.0/0,::/0"
     fi
     local public_key=`cat $userdir/publickey`
+
+    echo "configure user using 'wg set $interface peer $public_key allowed-ips $ip'"
+
     wg set $interface peer $public_key allowed-ips $ip
     if [[ $? -ne 0 ]]; then
         echo "wg set failed"
@@ -94,7 +108,7 @@ del_user() {
     local user=$1
     local userdir="users/$user"
     local ip key
-    local interface=${_INTERFACE}
+    local interface=$(get_interface)
 
     read ip key <<<"$(awk "/^$user /{print \$2, \$3}" ${SAVED_FILE})"
     if [[ -n "$key" ]]; then
@@ -104,11 +118,18 @@ del_user() {
             exit 1
         fi
     fi
-    sed -i "/^$user /d" ${SAVED_FILE}
+    sed -itmp "/^$user /d" ${SAVED_FILE}
     if [[ -n "$ip" ]]; then
         echo "$ip" >> ${AVAILABLE_IP_FILE}
     fi
     rm -rf $userdir && echo "use $user is deleted"
+}
+
+show_user_qr() {
+    local user=$1
+    local userdir="users/$user"
+
+    qrencode -t ansiutf8 < $userdir/wg0.conf
 }
 
 generate_and_install_server_config_file() {
@@ -132,8 +153,8 @@ EOF
 }
 
 clear_all() {
-    local interface=$_INTERFACE
-    wg-quick down $interface
+    local config_name=$_CONFIG_NAME
+    wg-quick down $config_name
     > $WG_CONF_FILE
     rm -f ${SAVED_FILE} ${AVAILABLE_IP_FILE}
 }
@@ -149,13 +170,15 @@ do_user() {
         add_user $user
     elif [[ $action == "-d" ]]; then
         del_user $user
+    elif [[ $action == "-qr" ]]; then
+        show_user_qr $user
     fi
 
     generate_and_install_server_config_file
 }
 
 init_server() {
-    local interface=$_INTERFACE
+    local config_name=$_CONFIG_NAME
     local template_file=${SERVER_TPL_FILE}
 
     if [[ -s $WG_CONF_FILE ]]; then
@@ -165,7 +188,7 @@ init_server() {
     generate_cidr_ip_file_if
     eval "echo \"$(cat "${template_file}")\"" > $WG_CONF_FILE
     chmod 600 $WG_CONF_FILE
-    wg-quick up $interface
+    wg-quick up $config_name
 }
 
 list_user() {
@@ -203,7 +226,7 @@ elif [[ $action == "-l" ]]; then
     list_user
 elif [[ $action == "-g" ]]; then
     generate_cidr_ip_file_if
-elif [[ ! -z "$user" && ( $action == "-a" || $action == "-d" ) ]]; then
+elif [[ ! -z "$user" && ( $action == "-a" || $action == "-d" || $action == "-qr"  ) ]]; then
     do_user
 else
     usage

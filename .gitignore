@@ -1,4 +1,5 @@
 .available_ip
+.available_iptmp
 .saved
 .wg0.conf
 users/
