@@ -66,6 +66,8 @@ add_user() {
     local interface=$(get_interface)
     local allowedIps=${_ALLOWED_IPS}
     local userdir="users/$user"
+    local qr_image="$userdir/$user.png"
+    local wg_config="$userdir/wg0.conf"
 
     mkdir -p "$userdir"
     wg genkey | tee $userdir/privatekey | wg pubkey > $userdir/publickey
@@ -77,8 +79,8 @@ add_user() {
         echo "no available ip"
         exit 1
     fi
-    eval "echo \"$(cat "${template_file}")\"" > $userdir/wg0.conf
-    qrencode -o $userdir/$user.png  < $userdir/wg0.conf
+    eval "echo \"$(cat "${template_file}")\"" > $wg_config
+    qrencode -o $qr_image  < $wg_config
 
     # change wg config
     local ip=${_VPN_IP%/*}/32
@@ -100,6 +102,9 @@ add_user() {
         rm -rf $user
         exit 1
     fi
+
+    zip -j "${userdir}.zip" "$wg_config" "$qr_image"
+    chmod g+r "${userdir}.zip"
 
     echo "$user $_VPN_IP $public_key" >> ${SAVED_FILE} && echo "use $user is added. config dir is $userdir"
 }
